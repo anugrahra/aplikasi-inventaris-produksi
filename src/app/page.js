@@ -183,7 +183,11 @@ function DashboardContent() {
                  <tr><td colSpan="5" className="py-20 text-center text-slate-400 animate-pulse font-medium">Sedang memuat data gudang...</td></tr>
               ) : dataBarang.length > 0 ? (
                 dataBarang.map((item) => (
-                  <tr key={item.id} className="hover:bg-blue-50/40 transition-colors group">
+                  <tr 
+                    key={item.id} 
+                    className="hover:bg-blue-50/40 transition-colors group cursor-pointer" // Tambah cursor-pointer
+                    onClick={() => router.push(`/barang/${item.id}`)} // INI KUNCINYA: Klik baris -> Buka Detail
+                  >
                     
                     {/* Kolom Kode */}
                     <td className="py-5 px-6 font-mono text-[11px] text-blue-600 font-bold tracking-tighter opacity-70 group-hover:opacity-100">
@@ -215,7 +219,7 @@ function DashboardContent() {
                     </td>
 
                     {/* Kolom Aksi */}
-                    <td className="py-5 px-6 text-center">
+                    <td className="py-5 px-6 text-center" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-center gap-2">
                         {/* Tombol Edit (Link ke halaman Tambah) */}
                         <Link href={`/tambah?id=${item.id}`} className="p-2 text-slate-300 hover:text-orange-500 hover:bg-orange-50 rounded-xl transition-all" title="Edit Master Data">

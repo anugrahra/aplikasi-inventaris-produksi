@@ -1,21 +1,21 @@
+"use client" // Tambahkan ini di paling atas
 import "./globals.css";
-// Import Navbar yang baru lo buat
 import Navbar from "../components/Navbar"; 
-
-export const metadata = {
-  title: "Asset Control | Inventaris Produksi",
-  description: "Sistem Pemantauan Inventaris Operasional Produksi & Warehouse",
-};
+import { usePathname } from 'next/navigation'
 
 export default function RootLayout({ children }) {
+  const pathname = usePathname()
+  
+  // LOGIKA: Kalau di halaman login, jangan munculin Navbar
+  const isLoginPage = pathname === '/login'
+
   return (
     <html lang="id">
-      <body className="bg-gray-50">
-        {/* Pasang Navbar di sini, di atas children */}
-        <Navbar />
+      <body className="bg-gray-50 text-slate-900">
+        {!isLoginPage && <Navbar />}
         
-        {/* Tambahkan padding biar konten nggak ketutup navbar */}
-        <main className="pt-20 pb-24 md:pb-10 min-h-screen">
+        {/* Atur padding: kalau login gak usah pake padding top navbar */}
+        <main className={`${!isLoginPage ? 'pt-20 pb-24 md:pb-10' : ''} min-h-screen`}>
           {children}
         </main>
       </body>
