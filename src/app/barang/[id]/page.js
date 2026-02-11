@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '../../../lib/supabase'
+import { isAdmin } from '../../../lib/auth' // <--- KITA PAKE INI SEKARANG
 import Link from 'next/link'
 
 // GANTI LIBRARY EXPORT DI SINI
