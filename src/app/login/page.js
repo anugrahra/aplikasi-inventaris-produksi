@@ -32,10 +32,10 @@ export default function LoginPage() {
         <div className="absolute bottom-[-10%] right-[-10%] w-80 h-80 bg-blue-400 rounded-full blur-[120px] opacity-20"></div>
         
         <div className="relative z-10">
-          <div className="bg-blue-600 w-16 h-16 rounded-2xl mb-8 flex items-center justify-center text-white text-4xl font-black shadow-2xl shadow-blue-500/50">P</div>
+          <div className="bg-blue-600 w-16 h-16 rounded-2xl mb-8 flex items-center justify-center text-white text-4xl font-black shadow-2xl shadow-blue-500/50">G</div>
           <h1 className="text-5xl font-black text-white leading-none tracking-tighter uppercase italic">
-            Production <br /> 
-            <span className="text-blue-500">Asset</span> Control
+            Sistem <br /> 
+            <span className="text-blue-500">Gudang</span> BLUD Air Minum
           </h1>
           <p className="mt-6 text-slate-400 max-w-sm font-medium leading-relaxed">
             Sistem pemantauan inventaris terpadu untuk efisiensi operasional dan akurasi data aset produksi.
