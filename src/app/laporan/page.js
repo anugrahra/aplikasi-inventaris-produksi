@@ -4,23 +4,22 @@ import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { useRouter } from 'next/navigation' 
 
 export default function LaporanPage() {
+  const router = useRouter()
   const [transaksi, setTransaksi] = useState([])
   const [loading, setLoading] = useState(false)
 
-  // === STATE FILTER DIAMOND ===
-  const [filterMode, setFilterMode] = useState('BULANAN') // Opsi: 'BULANAN' atau 'CUSTOM'
+  // === STATE FILTER ===
+  const [filterMode, setFilterMode] = useState('BULANAN') 
   
-  // State untuk Mode Bulanan (Default: Bulan & Tahun Sekarang)
   const [selectedBulan, setSelectedBulan] = useState(new Date().getMonth() + 1)
   const [selectedTahun, setSelectedTahun] = useState(new Date().getFullYear())
 
-  // State untuk Mode Custom
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
 
-  // List Bulan untuk Dropdown
   const LIST_BULAN = [
     { id: 1, nama: 'Januari' }, { id: 2, nama: 'Februari' }, { id: 3, nama: 'Maret' },
     { id: 4, nama: 'April' }, { id: 5, nama: 'Mei' }, { id: 6, nama: 'Juni' },
@@ -28,11 +27,10 @@ export default function LaporanPage() {
     { id: 10, nama: 'Oktober' }, { id: 11, nama: 'November' }, { id: 12, nama: 'Desember' }
   ]
 
-  // Generate List Tahun (5 Tahun ke belakang)
   const currentYear = new Date().getFullYear()
   const LIST_TAHUN = Array.from({ length: 5 }, (_, i) => currentYear - i)
 
-  // === FETCH DATA ENGINE ===
+  // === FETCH DATA ===
   const fetchLaporan = async () => {
     setLoading(true)
     
@@ -47,11 +45,9 @@ export default function LaporanPage() {
       `)
       .order('created_at', { ascending: false })
 
-    // --- LOGIC FILTER ---
+    // LOGIC FILTER
     if (filterMode === 'BULANAN') {
-      // Logic: Tanggal 1 sampai Tanggal Terakhir di bulan itu
       const startStr = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}-01T00:00:00`
-      // Trik dapet tanggal terakhir bulan: new Date(y, m, 0)
       const lastDay = new Date(selectedTahun, selectedBulan, 0).getDate() 
       const endStr = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}-${lastDay}T23:59:59`
 
@@ -63,7 +59,6 @@ export default function LaporanPage() {
         setLoading(false)
         return
       }
-      // Pastikan endDate mencakup sampai jam 23:59:59
       query = query.gte('created_at', `${startDate}T00:00:00`).lte('created_at', `${endDate}T23:59:59`)
     }
 
@@ -78,7 +73,6 @@ export default function LaporanPage() {
     setLoading(false)
   }
 
-  // Load data bulan ini saat pertama kali buka
   useEffect(() => {
     fetchLaporan()
   }, [])
@@ -91,7 +85,7 @@ export default function LaporanPage() {
     })
   }
 
-  // === JURUS EXPORT EXCEL ===
+  // === EXPORT EXCEL ===
   const exportToExcel = () => {
     const dataUntukExcel = transaksi.map(log => ({
       Waktu: formatTanggal(log.created_at),
@@ -107,7 +101,6 @@ export default function LaporanPage() {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, "Laporan Mutasi")
     
-    // Nama file dinamis
     const periodName = filterMode === 'BULANAN' 
       ? `${LIST_BULAN[selectedBulan-1].nama}_${selectedTahun}` 
       : `Custom_${startDate}_sd_${endDate}`
@@ -115,7 +108,7 @@ export default function LaporanPage() {
     XLSX.writeFile(workbook, `Laporan_PAC_${periodName}.xlsx`)
   }
 
-  // === JURUS EXPORT PDF ===
+  // === EXPORT PDF ===
   const exportToPDF = () => {
     const doc = new jsPDF()
     doc.text("LAPORAN MUTASI BARANG - PAC SYSTEM", 14, 15)
@@ -159,7 +152,7 @@ export default function LaporanPage() {
         <p className="text-slate-500 text-sm font-medium">Rekapitulasi keluar masuk barang gudang.</p>
       </div>
 
-      {/* === FILTER CONTROLLER (THE DIAMOND IDEA) === */}
+      {/* === FILTER CONTROLLER === */}
       <div className="bg-white p-6 rounded-[24px] shadow-xl shadow-slate-200/50 border border-slate-100 mb-8">
         
         {/* 1. SWITCHER MODE */}
@@ -180,7 +173,7 @@ export default function LaporanPage() {
           </button>
         </div>
 
-        {/* 2. INPUT AREA (CONDITIONAL) */}
+        {/* 2. INPUT AREA */}
         <div className="flex flex-col md:flex-row gap-4 items-end">
           
           {filterMode === 'BULANAN' ? (
@@ -282,13 +275,20 @@ export default function LaporanPage() {
                 <tr><td colSpan="5" className="py-20 text-center text-blue-500 animate-pulse font-bold">Memuat data transaksi...</td></tr>
               ) : transaksi.length > 0 ? (
                 transaksi.map((log) => (
-                  <tr key={log.id} className="hover:bg-blue-50/30 transition-colors group">
+                  <tr 
+                    key={log.id} 
+                    // === JURUS UX: KLIK BARIS ===
+                    onClick={() => router.push(`/barang/${log.barang_id}`)}
+                    className="hover:bg-blue-50/50 transition-colors cursor-pointer border-b border-slate-50 last:border-0"
+                  >
                     <td className="py-4 px-6">
                       <div className="font-bold text-slate-700">{formatTanggal(log.created_at)}</div>
                       <div className="text-[9px] text-slate-400 uppercase font-black mt-1 tracking-widest">{log.petugas?.split('@')[0]}</div>
                     </td>
                     <td className="py-4 px-6">
-                      <div className="font-black text-slate-800">{log.nama_barang}</div>
+                      <div className="font-black text-slate-800">
+                        {log.nama_barang}
+                      </div>
                     </td>
                     <td className="py-4 px-6 text-center">
                       <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${
