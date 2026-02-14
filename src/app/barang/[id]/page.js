@@ -2,10 +2,10 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '../../../lib/supabase'
-import { isAdmin } from '../../../lib/auth' // <--- KITA PAKE INI SEKARANG
+import { isAdmin } from '../../../lib/auth' 
 import Link from 'next/link'
 
-// GANTI LIBRARY EXPORT DI SINI
+// LIBRARY EXPORT
 import ExcelJS from 'exceljs'
 import { saveAs } from 'file-saver'
 import jsPDF from 'jspdf'
@@ -13,7 +13,7 @@ import autoTable from 'jspdf-autotable'
 
 export default function DetailBarangPage() {
   return (
-    <Suspense fallback={<div className="text-center mt-20">Memuat Data Detektif...</div>}>
+    <Suspense fallback={<div className="text-center mt-20 text-blue-600 font-bold animate-pulse">Memuat Data Detektif...</div>}>
       <DetailContent />
     </Suspense>
   )
@@ -28,37 +28,70 @@ function DetailContent() {
   const [riwayat, setRiwayat] = useState([])
   const [loading, setLoading] = useState(true)
 
+  // === STATE FILTER DIAMOND ===
+  const [filterMode, setFilterMode] = useState('BULANAN') // 'BULANAN' or 'CUSTOM'
+  const [selectedBulan, setSelectedBulan] = useState(new Date().getMonth() + 1)
+  const [selectedTahun, setSelectedTahun] = useState(new Date().getFullYear())
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+
+  // CONSTANTS
+  const LIST_BULAN = [
+    { id: 1, nama: 'Januari' }, { id: 2, nama: 'Februari' }, { id: 3, nama: 'Maret' },
+    { id: 4, nama: 'April' }, { id: 5, nama: 'Mei' }, { id: 6, nama: 'Juni' },
+    { id: 7, nama: 'Juli' }, { id: 8, nama: 'Agustus' }, { id: 9, nama: 'September' },
+    { id: 10, nama: 'Oktober' }, { id: 11, nama: 'November' }, { id: 12, nama: 'Desember' }
+  ]
+  const currentYear = new Date().getFullYear()
+  const LIST_TAHUN = Array.from({ length: 5 }, (_, i) => currentYear - i)
+
+  // 1. FETCH INFO BARANG
   useEffect(() => {
-    const getData = async () => {
-      setLoading(true)
-      
-      const { data: dataBarang, error: errBarang } = await supabase
+    const fetchBarang = async () => {
+      const { data, error } = await supabase
         .from('inventaris_produksi')
         .select('*')
         .eq('id', id)
         .single()
 
-      if (errBarang) {
+      if (error) {
         alert("Barang tidak ditemukan!")
         router.push('/')
-        return
+      } else {
+        setBarang(data)
+        fetchRiwayat() 
       }
-      setBarang(dataBarang)
+    }
+    if (id) fetchBarang()
+  }, [id])
 
-      const { data: dataLog, error: errLog } = await supabase
-        .from('riwayat_transaksi')
-        .select('*')
-        .eq('barang_id', id)
-        .order('created_at', { ascending: false })
+  // 2. FETCH RIWAYAT (Bisa Dipanggil Ulang)
+  const fetchRiwayat = async () => {
+    setLoading(true)
+    let query = supabase
+      .from('riwayat_transaksi')
+      .select('*')
+      .eq('barang_id', id)
+      .order('created_at', { ascending: false })
 
-      if (errLog) console.error(errLog)
-      else setRiwayat(dataLog || [])
-
-      setLoading(false)
+    // LOGIC FILTER
+    if (filterMode === 'BULANAN') {
+      const lastDay = new Date(selectedTahun, selectedBulan, 0).getDate()
+      const startStr = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}-01T00:00:00`
+      const endStr = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}-${lastDay}T23:59:59`
+      query = query.gte('created_at', startStr).lte('created_at', endStr)
+    } else if (filterMode === 'CUSTOM') {
+      if (startDate && endDate) {
+        query = query.gte('created_at', `${startDate}T00:00:00`).lte('created_at', `${endDate}T23:59:59`)
+      }
     }
 
-    if (id) getData()
-  }, [id, router])
+    const { data, error } = await query
+    if (error) console.error(error)
+    else setRiwayat(data || [])
+    
+    setLoading(false)
+  }
 
   const formatTanggal = (timestamp) => {
     return new Date(timestamp).toLocaleDateString('id-ID', {
@@ -67,47 +100,62 @@ function DetailContent() {
     })
   }
 
-  // === 🎨 FITUR EXPORT EXCEL CANTIK (ExcelJS) ===
+  // === 🔥 LOGIC CEK KRITIS (SMART ALERT) ===
+  const cekStatusStok = (item) => {
+    if (!item) return 'aman' // Default
+
+    // 1. Stok 0 (Habis) -> MERAH MUTLAK
+    if (item.jumlah_barang === 0) return 'habis';
+
+    // 2. Kategori Pipa & Fitting (< 5)
+    if (item.kategori_barang === 'Material Perpipaan / Fitting' && item.jumlah_barang < 5) return 'kritis';
+
+    // 3. Kategori Bahan Kimia (LOGIKA SPESIFIK)
+    if (item.kategori_barang === 'Bahan Kimia Operasional') {
+      const nama = item.nama_barang.toLowerCase();
+
+      // A. High Volume Items (< 1000)
+      if ((nama.includes('calcium hypochlorite') || nama.includes('pac 280')) && item.jumlah_barang < 1000) return 'kritis';
+      // B. DPD No. 1 (Sisa <= 50)
+      if (nama.includes('dpd no. 1') && item.jumlah_barang <= 50) return 'kritis';
+      // C. Phenol Rapid Red (Sisa <= 5)
+      if (nama.includes('phenol rapid red') && item.jumlah_barang <= 5) return 'kritis';
+      // D. Aquades (Sisa <= 1)
+      if (nama.includes('aquades') && item.jumlah_barang <= 1) return 'kritis';
+    }
+
+    return 'aman';
+  }
+
+  // === 🎨 EXPORT EXCEL ===
   const exportToExcel = async () => {
     const workbook = new ExcelJS.Workbook()
     const sheet = workbook.addWorksheet('Kartu Stok')
 
-    // 1. HEADER JUDUL BESAR
+    // HEADER
     sheet.mergeCells('A1:E1')
     sheet.getCell('A1').value = 'KARTU RIWAYAT BARANG (BIN CARD)'
-    sheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' }
     sheet.getCell('A1').font = { name: 'Arial', size: 14, bold: true }
+    sheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' }
 
-    // 2. INFO BARANG
     sheet.mergeCells('A2:E2')
-    sheet.getCell('A2').value = `Item: ${barang.nama_barang} | Kode: ${barang.kode_barang} | Sisa Stok: ${barang.jumlah_barang} ${barang.satuan_barang}`
+    const periodeInfo = filterMode === 'BULANAN' 
+      ? `${LIST_BULAN[selectedBulan-1].nama} ${selectedTahun}`
+      : `${startDate} s/d ${endDate}`
+    sheet.getCell('A2').value = `Item: ${barang.nama_barang} | Periode: ${periodeInfo}`
     sheet.getCell('A2').alignment = { vertical: 'middle', horizontal: 'center' }
-    sheet.getCell('A2').font = { name: 'Arial', size: 10, italic: true }
 
-    // Spasi Kosong
     sheet.addRow([])
-
-    // 3. HEADER TABEL
     const headerRow = sheet.addRow(['Tanggal', 'Tipe', 'Jumlah', 'Keterangan', 'Petugas'])
     
-    // Styling Header Tabel (Warna Biru, Teks Putih)
+    // Style Header
     headerRow.eachCell((cell) => {
-      cell.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FF1E40AF' } // Biru Tua (Hex: 1E40AF)
-      }
-      cell.font = { color: { argb: 'FFFFFFFF' }, bold: true } // Putih
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } }
+      cell.font = { color: { argb: 'FFFFFFFF' }, bold: true }
       cell.alignment = { vertical: 'middle', horizontal: 'center' }
-      cell.border = {
-        top: { style: 'thin' },
-        left: { style: 'thin' },
-        bottom: { style: 'thin' },
-        right: { style: 'thin' }
-      }
     })
 
-    // 4. ISI DATA (LOOPING)
+    // Isi Data
     riwayat.forEach((log) => {
       const row = sheet.addRow([
         formatTanggal(log.created_at),
@@ -116,66 +164,33 @@ function DetailContent() {
         log.keterangan,
         log.petugas.split('@')[0]
       ])
-
-      // Styling Baris Data
       const isMasuk = log.jenis_transaksi === 'Masuk'
-      const warnaTeks = isMasuk ? 'FF16A34A' : 'FFDC2626' // Hijau atau Merah
-
-      // Kolom Tipe & Jumlah dikasih warna
-      row.getCell(2).font = { color: { argb: warnaTeks }, bold: true } // Tipe
-      row.getCell(3).font = { color: { argb: warnaTeks }, bold: true } // Jumlah
-      
-      // Kasih Border ke semua sel di baris ini
-      row.eachCell((cell) => {
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        }
-      })
+      const warna = isMasuk ? 'FF16A34A' : 'FFDC2626'
+      row.getCell(2).font = { color: { argb: warna }, bold: true }
+      row.getCell(3).font = { color: { argb: warna }, bold: true }
     })
 
-    // 5. ATUR LEBAR KOLOM OTOMATIS
-    sheet.columns = [
-      { width: 20 }, // Tanggal
-      { width: 15 }, // Tipe
-      { width: 10 }, // Jumlah
-      { width: 40 }, // Keterangan
-      { width: 20 }, // Petugas
-    ]
-
-    // 6. DOWNLOAD FILE
+    sheet.columns = [{ width: 22 }, { width: 15 }, { width: 10 }, { width: 45 }, { width: 20 }]
     const buffer = await workbook.xlsx.writeBuffer()
     saveAs(new Blob([buffer]), `BinCard_${barang.kode_barang}.xlsx`)
   }
 
-  // === 📄 FITUR EXPORT PDF (Tetap Pakai yang Tadi) ===
+  // === 📄 EXPORT PDF ===
   const exportToPDF = () => {
     const doc = new jsPDF()
-
-    doc.setFontSize(14)
-    doc.setFont("helvetica", "bold")
-    doc.text("KARTU RIWAYAT BARANG (BIN CARD)", 105, 15, { align: "center" })
+    doc.setFontSize(14); doc.setFont("helvetica", "bold")
+    doc.text("KARTU RIWAYAT BARANG", 105, 15, { align: "center" })
+    doc.setFontSize(10); doc.setFont("helvetica", "normal")
     
-    doc.setFontSize(10)
-    doc.setFont("helvetica", "normal")
-    doc.text("PAC SYSTEM - Laporan Stok Individual", 105, 20, { align: "center" })
+    const periodeInfo = filterMode === 'BULANAN' 
+      ? `${LIST_BULAN[selectedBulan-1].nama} ${selectedTahun}`
+      : `${startDate} s/d ${endDate}`
+    doc.text(`Periode Laporan: ${periodeInfo}`, 105, 20, { align: "center" })
 
-    doc.setLineWidth(0.5)
     doc.line(14, 25, 196, 25)
+    doc.text(`Item: ${barang.nama_barang}`, 14, 32)
+    doc.text(`Stok Saat Ini: ${barang.jumlah_barang} ${barang.satuan_barang}`, 196, 32, { align: "right" })
 
-    doc.setFontSize(10)
-    doc.text(`Nama Item  : ${barang.nama_barang}`, 14, 32)
-    doc.text(`Kode Aset  : ${barang.kode_barang}`, 14, 37)
-    doc.text(`Kategori   : ${barang.kategori_barang}`, 14, 42)
-
-    doc.setFont("helvetica", "bold")
-    doc.text(`Sisa Stok: ${barang.jumlah_barang} ${barang.satuan_barang}`, 196, 32, { align: "right" })
-    doc.setFont("helvetica", "normal")
-    doc.text(`Per Tanggal: ${new Date().toLocaleDateString('id-ID')}`, 196, 37, { align: "right" })
-
-    const tableColumn = ["Tanggal", "Aktivitas", "Qty", "Keterangan", "Petugas"]
     const tableRows = riwayat.map(log => [
       formatTanggal(log.created_at),
       log.jenis_transaksi.toUpperCase(),
@@ -185,46 +200,25 @@ function DetailContent() {
     ])
 
     autoTable(doc, {
-      head: [tableColumn],
+      head: [["Tanggal", "Tipe", "Qty", "Keterangan", "Petugas"]],
       body: tableRows,
-      startY: 50,
+      startY: 40,
       theme: 'grid',
-      headStyles: { 
-        fillColor: [51, 65, 85], 
-        textColor: 255,
-        fontStyle: 'bold',
-        halign: 'center'
-      },
-      styles: { fontSize: 9, cellPadding: 3 },
-      columnStyles: {
-        0: { cellWidth: 35 },
-        1: { cellWidth: 25, halign: 'center' },
-        2: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
-        4: { cellWidth: 30 }
-      },
-      didParseCell: function(data) {
-        if (data.section === 'body' && (data.column.index === 1 || data.column.index === 2)) {
-          if (data.cell.raw.toString().includes('MASUK') || data.cell.raw.toString().includes('+')) {
-            data.cell.styles.textColor = [22, 163, 74]
-          } else {
-            data.cell.styles.textColor = [220, 38, 38]
-          }
-        }
-      }
+      headStyles: { fillColor: [51, 65, 85] }
     })
-
-    const finalY = doc.lastAutoTable.finalY + 10
-    doc.setFontSize(8)
-    doc.text("Dokumen ini digenerate otomatis oleh PAC System.", 14, finalY)
-
     doc.save(`BinCard_${barang.kode_barang}.pdf`)
   }
 
-  if (loading) return <div className="min-h-screen flex justify-center items-center text-blue-600 font-bold animate-pulse">Sedang menarik berkas...</div>
   if (!barang) return null
+
+  // Tentukan Status Stok
+  const statusStok = cekStatusStok(barang);
+  const warnaStok = statusStok === 'aman' ? 'text-emerald-600' : 'text-red-600 animate-pulse';
 
   return (
     <div className="max-w-5xl mx-auto p-6 md:p-10 font-sans min-h-screen">
+      
+      {/* HEADER & TOMBOL BACK */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
           <button onClick={() => router.back()} className="text-sm text-slate-400 hover:text-blue-600 flex items-center gap-1 transition font-bold">
@@ -232,17 +226,18 @@ function DetailContent() {
           </button>
           
           <div className="flex gap-2">
-            <button onClick={exportToExcel} className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition shadow-sm">
+            <button onClick={exportToExcel} disabled={riwayat.length === 0} className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition disabled:opacity-50">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-              Excel Pro
+              Excel
             </button>
-            <button onClick={exportToPDF} className="bg-red-100 text-red-700 hover:bg-red-200 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition shadow-sm">
+            <button onClick={exportToPDF} disabled={riwayat.length === 0} className="bg-red-100 text-red-700 hover:bg-red-200 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 transition disabled:opacity-50">
                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-              Print PDF
+              PDF
             </button>
           </div>
         </div>
 
+        {/* INFO BARANG UTAMA */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-8">
           <div>
             <h1 className="text-3xl font-black text-slate-800 uppercase tracking-tighter">{barang.nama_barang}</h1>
@@ -251,51 +246,74 @@ function DetailContent() {
               <span>• {barang.merek_barang || 'Tanpa Merek'}</span>
             </p>
           </div>
+          <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-sm">
+            <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest text-right">Sisa Stok Total</p>
+            {/* --- PENERAPAN LOGIC SMART ALERT DISINI --- */}
+            <p className={`text-3xl font-black text-right ${warnaStok}`}>
+              {barang.jumlah_barang} <span className="text-sm text-slate-400 font-bold">{barang.satuan_barang}</span>
+            </p>
+            {statusStok === 'habis' && <p className="text-[9px] text-red-500 font-bold text-right mt-1">⚠️ STOK HABIS</p>}
+            {statusStok === 'kritis' && <p className="text-[9px] text-red-500 font-bold text-right mt-1">⚠️ STOK MENIPIS</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* === FILTER SECTION === */}
+      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 mb-8">
+        <div className="flex gap-4 mb-4">
+          <button onClick={() => setFilterMode('BULANAN')} className={`text-xs font-bold px-3 py-1.5 rounded-lg transition ${filterMode === 'BULANAN' ? 'bg-white text-blue-600 shadow-sm ring-1 ring-blue-100' : 'text-slate-400 hover:text-slate-600'}`}>
+            Per Bulan
+          </button>
+          <button onClick={() => setFilterMode('CUSTOM')} className={`text-xs font-bold px-3 py-1.5 rounded-lg transition ${filterMode === 'CUSTOM' ? 'bg-white text-blue-600 shadow-sm ring-1 ring-blue-100' : 'text-slate-400 hover:text-slate-600'}`}>
+            Custom Tanggal
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row gap-4 items-end">
+          {filterMode === 'BULANAN' ? (
+            <>
+              <div className="w-full md:w-48">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Bulan</label>
+                <select className="w-full p-2.5 rounded-xl border border-slate-200 text-sm font-bold mt-1 focus:ring-2 focus:ring-blue-100 outline-none" value={selectedBulan} onChange={(e) => setSelectedBulan(parseInt(e.target.value))}>
+                  {LIST_BULAN.map(b => <option key={b.id} value={b.id}>{b.nama}</option>)}
+                </select>
+              </div>
+              <div className="w-full md:w-32">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Tahun</label>
+                <select className="w-full p-2.5 rounded-xl border border-slate-200 text-sm font-bold mt-1 focus:ring-2 focus:ring-blue-100 outline-none" value={selectedTahun} onChange={(e) => setSelectedTahun(parseInt(e.target.value))}>
+                  {LIST_TAHUN.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-full md:w-40">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dari</label>
+                <input type="date" className="w-full p-2.5 rounded-xl border border-slate-200 text-sm font-bold mt-1 focus:ring-2 focus:ring-blue-100 outline-none" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              </div>
+              <div className="w-full md:w-40">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sampai</label>
+                <input type="date" className="w-full p-2.5 rounded-xl border border-slate-200 text-sm font-bold mt-1 focus:ring-2 focus:ring-blue-100 outline-none" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              </div>
+            </>
+          )}
           
-          <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-sm flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest">Sisa Stok</p>
-              <p className={`text-3xl font-black ${barang.jumlah_barang < 5 ? 'text-red-500' : 'text-emerald-600'}`}>
-                {barang.jumlah_barang} <span className="text-sm text-slate-400 font-bold">{barang.satuan_barang}</span>
-              </p>
-            </div>
-             <div className="flex flex-col gap-1">
-               <Link href={`/tambah?id=${barang.id}`} className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2 rounded-lg transition" title="Edit Data Master">
-                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-               </Link>
-            </div>
-          </div>
+          <button onClick={fetchRiwayat} className="bg-slate-900 text-white px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-slate-800 transition shadow-lg flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            Tampilkan
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-             <svg className="w-16 h-16 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" /></svg>
-          </div>
-          <p className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">Klasifikasi</p>
-          <p className="font-bold text-slate-700 text-lg">{barang.kategori_barang}</p>
-        </div>
-        <div className="bg-emerald-50 p-6 rounded-2xl border border-emerald-100 shadow-sm">
-          <p className="text-[10px] uppercase font-bold text-emerald-600/60 tracking-widest mb-1">Total Masuk (Inbound)</p>
-          <p className="font-black text-2xl text-emerald-600">
-            +{riwayat.filter(r => r.jenis_transaksi === 'Masuk').reduce((acc, curr) => acc + curr.jumlah, 0)}
-          </p>
-        </div>
-        <div className="bg-red-50 p-6 rounded-2xl border border-red-100 shadow-sm">
-          <p className="text-[10px] uppercase font-bold text-red-600/60 tracking-widest mb-1">Total Keluar (Outbound)</p>
-          <p className="font-black text-2xl text-red-600">
-            -{riwayat.filter(r => r.jenis_transaksi === 'Keluar').reduce((acc, curr) => acc + curr.jumlah, 0)}
-          </p>
-        </div>
-      </div>
-
+      {/* === LIST RIWAYAT === */}
       <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 border-l-4 border-blue-600 pl-3">
         Kartu Stok Digital
       </h3>
       
       <div className="bg-white rounded-3xl shadow-xl shadow-slate-100 border border-slate-100 overflow-hidden">
-        {riwayat.length > 0 ? (
+        {loading ? (
+           <div className="p-10 text-center text-blue-500 font-bold animate-pulse">Sedang memfilter data...</div>
+        ) : riwayat.length > 0 ? (
           <div className="divide-y divide-slate-50">
             {riwayat.map((log) => (
               <div key={log.id} className="p-5 hover:bg-slate-50 transition flex items-start gap-4 group">
@@ -340,7 +358,7 @@ function DetailContent() {
             <div className="bg-slate-50 p-4 rounded-full mb-3">
                <svg className="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
             </div>
-            <p className="text-slate-400 italic text-sm font-medium">Belum ada riwayat transaksi.</p>
+            <p className="text-slate-400 italic text-sm font-medium">Tidak ada transaksi pada periode ini.</p>
           </div>
         )}
       </div>

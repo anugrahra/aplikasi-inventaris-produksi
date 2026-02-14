@@ -3,7 +3,8 @@
 
 export const isAdmin = (email) => {
   const adminEmails = [
-    'dialog.anugrah@gmail.com'
+    'dialog.anugrah@gmail.com',
+    'demo@gudangbludam.com'
   ];
   
   // Pastikan email ada isinya, baru cek daftar
